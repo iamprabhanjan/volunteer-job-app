@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Volunteer Job Application</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <div id="app">
+        <!-- Navigation -->
+        <nav class="navbar">
+            <div class="nav-container">
+                <h1 class="nav-title">Volunteer Hub</h1>
+                <div id="nav-buttons" class="nav-buttons">
+                    <button id="loginBtn" class="btn btn-primary">Login</button>
+                    <button id="registerBtn" class="btn btn-secondary">Register</button>
+                </div>
+                <div id="user-info" class="user-info" style="display: none;">
+                    <span id="userName"></span>
+                    <button id="logoutBtn" class="btn btn-danger">Logout</button>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <div class="container">
+            <!-- Login/Register Forms -->
+            <div id="auth-section" class="auth-section">
+                <!-- Login Form -->
+                <div id="loginForm" class="form-container" style="display: none;">
+                    <h2>Login</h2>
+                    <form id="loginFormElement">
+                        <input type="email" id="loginEmail" placeholder="Email" required>
+                        <input type="password" id="loginPassword" placeholder="Password" required>
+                        <button type="submit" class="btn btn-primary">Login</button>
+                    </form>
+                    <p>Don't have an account? <a href="#" id="showRegister">Register here</a></p>
+                </div>
+
+                <!-- Register Form -->
+                <div id="registerForm" class="form-container" style="display: none;">
+                    <h2>Register</h2>
+                    <form id="registerFormElement">
+                        <input type="text" id="registerFirstName" placeholder="First Name" required>
+                        <input type="text" id="registerLastName" placeholder="Last Name" required>
+                        <input type="email" id="registerEmail" placeholder="Email" required>
+                        <input type="tel" id="registerPhone" placeholder="Phone Number" required>
+                        <input type="password" id="registerPassword" placeholder="Password" required>
+                        <select id="registerRole" required>
+                            <option value="">Select Role</option>
+                            <option value="volunteer">Volunteer</option>
+                            <option value="department">Department</option>
+                        </select>
+                        <button type="submit" class="btn btn-primary">Register</button>
+                    </form>
+                    <p>Already have an account? <a href="#" id="showLogin">Login here</a></p>
+                </div>
+            </div>
+
+            <!-- Dashboard Section -->
+            <div id="dashboard-section" class="dashboard-section" style="display: none;">
+                
+                <!-- Department Dashboard -->
+                <div id="departmentDashboard" style="display: none;">
+                    <div class="dashboard-header">
+                        <h2>Department Dashboard</h2>
+                        <button id="showJobForm" class="btn btn-success">Post New Job</button>
+                    </div>
+
+                    <!-- Job Posting Form -->
+                    <div id="jobForm" class="form-container" style="display: none;">
+                        <h3>Post New Job Requirement</h3>
+                        <form id="jobFormElement">
+                            <input type="text" id="jobTitle" placeholder="Job Title" required>
+                            <textarea id="jobDescription" placeholder="Job Description" required></textarea>
+                            <input type="text" id="jobAgeGroup" placeholder="Age Group (e.g., 18-25, 25+)" required>
+                            <input type="text" id="jobLocation" placeholder="Location" required>
+                            <input type="datetime-local" id="jobReportingTime" required>
+                            <input type="number" id="jobMaxVolunteers" placeholder="Max Volunteers" min="1" value="1">
+                            <input type="text" id="jobContactName" placeholder="Contact Person Name" required>
+                            <input type="tel" id="jobContactPhone" placeholder="Contact Phone Number" required>
+                            <input type="email" id="jobContactEmail" placeholder="Contact Email" required>
+                            <button type="submit" class="btn btn-primary">Post Job</button>
+                            <button type="button" id="cancelJobForm" class="btn btn-secondary">Cancel</button>
+                        </form>
+                    </div>
+
+                    <!-- Department's Jobs -->
+                    <div id="departmentJobs">
+                        <h3>Your Posted Jobs</h3>
+                        <div id="departmentJobsList" class="jobs-list"></div>
+                    </div>
+                </div>
+
+                <!-- Volunteer Dashboard -->
+                <div id="volunteerDashboard" style="display: none;">
+                    <div class="dashboard-header">
+                        <h2>Available Volunteer Opportunities</h2>
+                        <button id="showMyApplications" class="btn btn-info">My Applications</button>
+                    </div>
+
+                    <!-- Available Jobs -->
+                    <div id="availableJobs">
+                        <h3>Available Jobs</h3>
+                        <div id="jobsList" class="jobs-list"></div>
+                    </div>
+
+                    <!-- My Applications -->
+                    <div id="myApplications" style="display: none;">
+                        <h3>My Applications</h3>
+                        <button id="backToJobs" class="btn btn-secondary">Back to Jobs</button>
+                        <div id="applicationsList" class="applications-list"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Area -->
+    <div id="notifications" class="notifications"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>
