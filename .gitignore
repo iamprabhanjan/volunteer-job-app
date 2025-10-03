@@ -58,6 +58,37 @@ data/archives/
 !data/*.sample.json
 !data/README.md
 
+# Development and deployment scripts (exclude from production)
+setup.bat
+setup-data.bat
+setup-data.sh
+deploy.bat
+*.bat
+*.sh
+!npm-scripts.sh
+
+# Documentation (exclude detailed docs from deployment)
+DATABASE_MIGRATION.md
+DATA_MANAGEMENT.md
+WITHDRAW_REMOVE_FUNCTIONALITY.md
+DEPLOYMENT.md
+
+# Development tools and configs
+.env.development
+.env.staging
+.env.test
+*.log
+logs/
+temp/
+tmp/
+
 # OS generated files
 Thumbs.db
 .DS_Store
+
+# Editor and IDE files
+*.sublime-project
+*.sublime-workspace
+.vscode/settings.json
+.vscode/launch.json
+.vscode/extensions.json
