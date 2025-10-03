@@ -45,6 +45,9 @@ function setupEventListeners() {
     document.getElementById('registerFormElement').addEventListener('submit', handleRegister);
     document.getElementById('jobFormElement').addEventListener('submit', handleJobSubmission);
     
+    // Registration form field toggle
+    document.getElementById('registerRole').addEventListener('change', toggleRegistrationFields);
+    
     // Dashboard buttons
     document.getElementById('showJobForm').addEventListener('click', () => {
         document.getElementById('jobForm').style.display = 'block';
@@ -61,7 +64,7 @@ function setupEventListeners() {
 async function handleLogin(e) {
     e.preventDefault();
     
-    const email = document.getElementById('loginEmail').value;
+    const identifier = document.getElementById('loginIdentifier').value;
     const password = document.getElementById('loginPassword').value;
     
     try {
@@ -70,7 +73,7 @@ async function handleLogin(e) {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ email, password })
+            body: JSON.stringify({ identifier, password })
         });
         
         const data = await response.json();
@@ -90,15 +93,98 @@ async function handleLogin(e) {
     }
 }
 
+// Toggle registration fields based on role selection
+function toggleRegistrationFields() {
+    const role = document.getElementById('registerRole').value;
+    const volunteerFields = document.getElementById('volunteerFields');
+    const departmentFields = document.getElementById('departmentFields');
+    
+    if (role === 'volunteer') {
+        volunteerFields.style.display = 'block';
+        departmentFields.style.display = 'none';
+        
+        // Clear department fields
+        document.getElementById('registerDepartmentEmail').value = '';
+        document.getElementById('registerDepartmentPhone').value = '';
+        document.getElementById('registerHfnId').value = '';
+        document.getElementById('registerDepartmentPassword').value = '';
+        
+        // Remove required from department fields
+        document.getElementById('registerDepartmentEmail').removeAttribute('required');
+        document.getElementById('registerDepartmentPhone').removeAttribute('required');
+        document.getElementById('registerHfnId').removeAttribute('required');
+        document.getElementById('registerDepartmentPassword').removeAttribute('required');
+        
+    } else if (role === 'department') {
+        volunteerFields.style.display = 'none';
+        departmentFields.style.display = 'block';
+        
+        // Clear volunteer fields
+        document.getElementById('registerVolunteerEmail').value = '';
+        document.getElementById('registerVolunteerPhone').value = '';
+        
+        // Add required to department fields
+        document.getElementById('registerDepartmentEmail').setAttribute('required', 'required');
+        document.getElementById('registerDepartmentPhone').setAttribute('required', 'required');
+        document.getElementById('registerHfnId').setAttribute('required', 'required');
+        document.getElementById('registerDepartmentPassword').setAttribute('required', 'required');
+        
+    } else {
+        volunteerFields.style.display = 'none';
+        departmentFields.style.display = 'none';
+    }
+}
+
 async function handleRegister(e) {
     e.preventDefault();
     
     const firstName = document.getElementById('registerFirstName').value;
     const lastName = document.getElementById('registerLastName').value;
-    const email = document.getElementById('registerEmail').value;
-    const phone = document.getElementById('registerPhone').value;
-    const password = document.getElementById('registerPassword').value;
     const role = document.getElementById('registerRole').value;
+    
+    let registrationData = { firstName, lastName, role };
+    
+    // Validate based on role
+    if (role === 'volunteer') {
+        const email = document.getElementById('registerVolunteerEmail').value;
+        const phone = document.getElementById('registerVolunteerPhone').value;
+        
+        // Volunteer must provide at least email OR phone
+        if (!email && !phone) {
+            showNotification('Please provide either email or mobile number', 'error');
+            return;
+        }
+        
+        if (email) registrationData.email = email;
+        if (phone) registrationData.phone = phone;
+        // No password required for volunteers
+        
+    } else if (role === 'department') {
+        const email = document.getElementById('registerDepartmentEmail').value;
+        const phone = document.getElementById('registerDepartmentPhone').value;
+        const hfnId = document.getElementById('registerHfnId').value;
+        const password = document.getElementById('registerDepartmentPassword').value;
+        
+        // Validate HFN ID format
+        const hfnPattern = /^[A-Za-z]{6}[0-9]{3}$/;
+        if (!hfnPattern.test(hfnId)) {
+            showNotification('HFN ID must be 6 letters followed by 3 numbers (e.g., HJABCD123)', 'error');
+            return;
+        }
+        
+        if (!password) {
+            showNotification('Password is required for departments', 'error');
+            return;
+        }
+        
+        registrationData.email = email;
+        registrationData.phone = phone;
+        registrationData.hfnId = hfnId.toUpperCase();
+        registrationData.password = password;
+    } else {
+        showNotification('Please select a role', 'error');
+        return;
+    }
     
     try {
         const response = await fetch('/api/register', {
@@ -106,7 +192,7 @@ async function handleRegister(e) {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ firstName, lastName, email, phone, password, role })
+            body: JSON.stringify(registrationData)
         });
         
         const data = await response.json();
@@ -142,6 +228,50 @@ function connectSocket() {
         if (currentUser.role === 'volunteer') {
             showNotification('New volunteer opportunity available!', 'info');
             loadAvailableJobs();
+        }
+    });
+    
+    socket.on('jobStatusesUpdated', (data) => {
+        if (currentUser.role === 'department') {
+            showSocketNotification(`🔄 ${data.count} job statuses updated automatically`);
+            // Refresh dashboard if viewing job management
+            if (document.querySelector('.job-management-container')) {
+                showJobManagement();
+            }
+        }
+    });
+    
+    socket.on('jobCancelled', (data) => {
+        if (currentUser.role === 'volunteer') {
+            showNotification(`Job cancelled: ${data.reason}`, 'warning');
+            loadAvailableJobs();
+        } else if (currentUser.role === 'department') {
+            // Refresh department jobs
+            loadDepartmentJobs();
+        }
+    });
+    
+    socket.on('applicationWithdrawn', (data) => {
+        if (currentUser.role === 'department') {
+            showSocketNotification(`${data.volunteerName} withdrew application from "${data.jobTitle}"`);
+            // Refresh department jobs to update application counts
+            loadDepartmentJobs();
+        } else if (currentUser.role === 'volunteer') {
+            // Refresh available jobs in case spots opened up
+            loadAvailableJobs();
+        }
+    });
+    
+    socket.on('jobRemoved', (data) => {
+        if (currentUser.role === 'volunteer') {
+            showNotification(`Job "${data.jobTitle}" has been removed by the department`, 'warning');
+            // Refresh available jobs and applications
+            loadAvailableJobs();
+            if (document.getElementById('applicationsList')) {
+                loadMyApplications();
+            }
+        } else if (currentUser.role === 'department') {
+            showSocketNotification(`Job "${data.jobTitle}" removed by ${data.removedBy}. ${data.affectedVolunteers} volunteers affected.`);
         }
     });
 }
@@ -342,15 +472,8 @@ async function applyForJob(jobId) {
 function getJobActionButton(job, isFull, availableSpots) {
     // Check if user has applied for this job
     if (job.userApplication) {
-        const status = job.userApplication.status;
-        switch (status) {
-            case 'pending':
-                return `<button class="btn btn-warning" disabled>Application Pending</button>`;
-            case 'accepted':
-                return `<button class="btn btn-success" disabled>✓ Accepted</button>`;
-            case 'rejected':
-                return `<button class="btn btn-danger" disabled>Application Rejected</button>`;
-        }
+        // All applications are automatically accepted
+        return `<button class="btn btn-success" disabled>✓ Applied & Accepted</button>`;
     }
     
     // If no application exists, show apply button or full message
@@ -362,30 +485,8 @@ function getJobActionButton(job, isFull, availableSpots) {
 }
 
 function getApplicationActionButtons(application) {
-    const status = application.status;
-    
-    switch (status) {
-        case 'pending':
-            return `
-                <button class="btn btn-success btn-sm" onclick="updateApplicationStatus('${application.id}', 'accepted')">Accept</button>
-                <button class="btn btn-danger btn-sm" onclick="updateApplicationStatus('${application.id}', 'rejected')">Reject</button>
-            `;
-        case 'accepted':
-            return `
-                <div class="status-indicator accepted">✓ Accepted</div>
-                <button class="btn btn-danger btn-sm" onclick="updateApplicationStatus('${application.id}', 'rejected')" title="Change to rejected">Reject</button>
-            `;
-        case 'rejected':
-            return `
-                <div class="status-indicator rejected">✗ Rejected</div>
-                <button class="btn btn-success btn-sm" onclick="updateApplicationStatus('${application.id}', 'accepted')" title="Change to accepted">Accept</button>
-            `;
-        default:
-            return `
-                <button class="btn btn-success btn-sm" onclick="updateApplicationStatus('${application.id}', 'accepted')">Accept</button>
-                <button class="btn btn-danger btn-sm" onclick="updateApplicationStatus('${application.id}', 'rejected')">Reject</button>
-            `;
-    }
+    // Applications are automatically accepted - no action buttons needed
+    return `<div class="status-indicator accepted">✓ Accepted</div>`;
 }
 
 function createJobCard(job) {
@@ -396,43 +497,80 @@ function createJobCard(job) {
     const availableSpots = job.availableSpots || (job.maxVolunteers - applicationCount);
     const isFull = availableSpots <= 0;
     
-    // Add user application status indicator
+    // Enhanced status indicators
     let userStatusIndicator = '';
+    let cardClass = 'job-card';
+    
     if (job.userApplication) {
-        const status = job.userApplication.status;
-        const statusText = status.charAt(0).toUpperCase() + status.slice(1);
-        userStatusIndicator = `<div class="user-status-indicator status-${status}">Your Status: ${statusText}</div>`;
+        userStatusIndicator = `<div class="user-status-indicator status-accepted">✓ Applied & Accepted</div>`;
+        cardClass += ` has-application status-accepted`;
+    }
+    
+    // Urgency indicator based on available spots
+    let urgencyBadge = '';
+    if (!isFull && availableSpots <= 2) {
+        urgencyBadge = '<span class="urgency-badge urgent">⚡ Urgent - Few spots left!</span>';
+    } else if (!isFull && availableSpots <= 5) {
+        urgencyBadge = '<span class="urgency-badge moderate">⏰ Filling fast</span>';
     }
     
     return `
-        <div class="job-card ${job.userApplication ? 'has-application' : ''}">
+        <div class="${cardClass}">
             ${userStatusIndicator}
-            <div class="job-title">
-                ${job.title}
-                <div class="application-stats">
-                    <span class="applications-count">${acceptedCount} accepted, ${pendingCount} pending</span>
-                    ${availableSpots > 0 ? `<span class="spots-left">${availableSpots} spots available</span>` : '<span class="job-full">Job Full</span>'}
+            <div class="job-header">
+                <div class="job-title">
+                    ${job.title}
+                    ${urgencyBadge}
+                </div>
+                <div class="job-stats">
+                    <div class="stat-box accepted">
+                        <span class="stat-number">${acceptedCount}</span>
+                        <span class="stat-label">Volunteers</span>
+                    </div>
+                    <div class="stat-box available ${isFull ? 'full' : ''}">
+                        <span class="stat-number">${isFull ? '0' : availableSpots}</span>
+                        <span class="stat-label">${isFull ? 'Full' : 'Available'}</span>
+                    </div>
                 </div>
             </div>
-            <div class="job-info">
-                <div class="job-detail">
-                    <strong>Age Group:</strong> ${job.ageGroup}
+            
+            <div class="job-details-grid">
+                <div class="detail-item">
+                    <div class="detail-icon">👥</div>
+                    <div class="detail-content">
+                        <strong>Age Group</strong>
+                        <span>${job.ageGroup}</span>
+                    </div>
                 </div>
-                <div class="job-detail">
-                    <strong>Location:</strong> ${job.location}
+                <div class="detail-item">
+                    <div class="detail-icon">📍</div>
+                    <div class="detail-content">
+                        <strong>Location</strong>
+                        <span>${job.location}</span>
+                    </div>
                 </div>
-                <div class="job-detail">
-                    <strong>Reporting Time:</strong> ${reportingDate}
+                <div class="detail-item">
+                    <div class="detail-icon">⏰</div>
+                    <div class="detail-content">
+                        <strong>Reporting Time</strong>
+                        <span>${reportingDate}</span>
+                    </div>
                 </div>
-                <div class="job-detail">
-                    <strong>Max Volunteers:</strong> ${job.maxVolunteers}
+                <div class="detail-item">
+                    <div class="detail-icon">👥</div>
+                    <div class="detail-content">
+                        <strong>Total Positions</strong>
+                        <span>${job.maxVolunteers}</span>
+                    </div>
                 </div>
             </div>
-            <div class="job-description">
-                <strong>Description:</strong><br>
-                ${job.description}
+            
+            <div class="job-description-enhanced">
+                <h4>📋 Description</h4>
+                <p>${job.description}</p>
             </div>
-            <div class="job-actions">
+            
+            <div class="job-actions-enhanced">
                 ${getJobActionButton(job, isFull, availableSpots)}
             </div>
         </div>
@@ -442,88 +580,136 @@ function createJobCard(job) {
 function createDepartmentJobCard(job) {
     const reportingDate = new Date(job.reportingTime).toLocaleString();
     const applications = job.applications || [];
-    const applicationsCount = applications.length;
-    const acceptedCount = applications.filter(app => app.status === 'accepted').length;
-    const pendingCount = applications.filter(app => app.status === 'pending').length;
-    const rejectedCount = applications.filter(app => app.status === 'rejected').length;
-    const availableSpots = job.maxVolunteers - acceptedCount - pendingCount;
+    const acceptedCount = applications.length; // All applications are accepted
+    const availableSpots = job.maxVolunteers - acceptedCount;
     
     let applicationsSection = '';
     if (job.applications && job.applications.length > 0) {
         applicationsSection = `
-            <div class="job-applications">
-                <h4>Applications (${applicationsCount})</h4>
+            <div class="dept-applications-detailed">
+                <h4>👥 Accepted Volunteers (${acceptedCount})</h4>
                 ${job.applications.map(app => `
-                    <div class="application-item-detailed application-${app.status}">
-                        <div class="volunteer-info">
-                            <div class="volunteer-name">
-                                <strong>${app.volunteer.firstName} ${app.volunteer.lastName}</strong>
-                                <span class="status-badge status-${app.status}">${app.status.charAt(0).toUpperCase() + app.status.slice(1)}</span>
-                            </div>
-                            <div class="volunteer-contact">
-                                <div class="contact-item">
-                                    <span>📧 <a href="mailto:${app.volunteer.email}">${app.volunteer.email}</a></span>
+                    <div class="dept-application-card application-accepted">
+                        <div class="applicant-header">
+                            <div class="applicant-info">
+                                <div class="applicant-name">
+                                    <strong>${app.volunteer.firstName} ${app.volunteer.lastName}</strong>
+                                    <span class="status-badge status-accepted">✓ Accepted</span>
                                 </div>
-                                <div class="contact-item">
-                                    <span>📱 <a href="tel:${app.volunteer.phone || 'N/A'}">${app.volunteer.phone || 'Phone not provided'}</a></span>
+                                <div class="application-meta">
+                                    <small>Applied & Accepted: ${new Date(app.appliedAt).toLocaleDateString()} at ${new Date(app.appliedAt).toLocaleTimeString()}</small>
                                 </div>
-                            </div>
-                            <div class="application-date">
-                                <small>Applied: ${new Date(app.appliedAt).toLocaleDateString()}</small>
                             </div>
                         </div>
-                        <div class="application-actions">
-                            ${getApplicationActionButtons(app)}
+                        <div class="applicant-contact">
+                            <div class="contact-row">
+                                <div class="contact-item">
+                                    <span class="contact-icon">📧</span>
+                                    <a href="mailto:${app.volunteer.email || 'N/A'}" class="contact-link">
+                                        ${app.volunteer.email || 'Email not provided'}
+                                    </a>
+                                </div>
+                                <div class="contact-item">
+                                    <span class="contact-icon">📱</span>
+                                    <a href="tel:${app.volunteer.phone || 'N/A'}" class="contact-link">
+                                        ${app.volunteer.phone || 'Phone not provided'}
+                                    </a>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 `).join('')}
             </div>
         `;
+    } else {
+        applicationsSection = `
+            <div class="no-applications">
+                <div class="empty-state-icon">�</div>
+                <h4>No Volunteers Yet</h4>
+                <p>When volunteers apply for this position, they will be automatically accepted and their details will appear here.</p>
+            </div>
+        `;
     }
     
     return `
-        <div class="job-card">
-            <div class="job-title">
-                ${job.title}
-                <span class="status-badge status-${job.status}">${job.status}</span>
-                <div class="department-job-stats">
-                    <span class="stat-item accepted">${acceptedCount} Accepted</span>
-                    <span class="stat-item pending">${pendingCount} Pending</span>
-                    <span class="stat-item rejected">${rejectedCount} Rejected</span>
-                    <span class="stat-item available">${availableSpots} Spots Left</span>
+        <div class="dept-job-card">
+            <div class="dept-job-header">
+                <div class="job-title-section">
+                    <h3 class="job-title">${job.title}</h3>
+                    <span class="job-status-badge status-${job.status}">${job.status.charAt(0).toUpperCase() + job.status.slice(1)}</span>
+                </div>
+                <div class="job-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${(acceptedCount / job.maxVolunteers) * 100}%"></div>
+                    </div>
+                    <span class="progress-text">${acceptedCount}/${job.maxVolunteers} positions filled</span>
                 </div>
             </div>
-            <div class="job-info">
-                <div class="job-detail">
-                    <strong>Age Group:</strong> ${job.ageGroup}
-                </div>
-                <div class="job-detail">
-                    <strong>Location:</strong> ${job.location}
-                </div>
-                <div class="job-detail">
-                    <strong>Reporting Time:</strong> ${reportingDate}
-                </div>
-                <div class="job-detail">
-                    <strong>Max Volunteers:</strong> ${job.maxVolunteers}
+            
+            <div class="dept-job-details">
+                <div class="detail-grid">
+                    <div class="detail-item">
+                        <span class="detail-icon">👥</span>
+                        <div class="detail-content">
+                            <strong>Age Group</strong>
+                            <span>${job.ageGroup}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-icon">📍</span>
+                        <div class="detail-content">
+                            <strong>Location</strong>
+                            <span>${job.location}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-icon">⏰</span>
+                        <div class="detail-content">
+                            <strong>Reporting Time</strong>
+                            <span>${reportingDate}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-icon">🎯</span>
+                        <div class="detail-content">
+                            <strong>Available Spots</strong>
+                            <span>${availableSpots} remaining</span>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div class="job-description">
-                <strong>Description:</strong><br>
-                ${job.description}
+            
+            <div class="job-description-section">
+                <h4>📋 Job Description</h4>
+                <p>${job.description}</p>
             </div>
-            <div class="contact-section">
+            
+            <div class="contact-info-section">
                 <h4>📞 Your Contact Information</h4>
-                <div class="contact-item">
-                    <strong>👤 Name:</strong> ${job.contactName || 'Not provided'}
-                </div>
-                <div class="contact-item">
-                    <strong>📱 Phone:</strong> ${job.contactPhone || 'Not provided'}
-                </div>
-                <div class="contact-item">
-                    <strong>📧 Email:</strong> ${job.contactEmail || 'Not provided'}
+                <div class="contact-grid">
+                    <div class="contact-item">
+                        <span class="contact-icon">👤</span>
+                        <span><strong>Name:</strong> ${job.contactName || 'Not provided'}</span>
+                    </div>
+                    <div class="contact-item">
+                        <span class="contact-icon">📱</span>
+                        <span><strong>Phone:</strong> ${job.contactPhone || 'Not provided'}</span>
+                    </div>
+                    <div class="contact-item">
+                        <span class="contact-icon">📧</span>
+                        <span><strong>Email:</strong> ${job.contactEmail || 'Not provided'}</span>
+                    </div>
                 </div>
             </div>
+            
             ${applicationsSection}
+            
+            <div class="dept-job-actions">
+                <button class="btn btn-danger" onclick="removeJob('${job.id}', '${job.title}')">
+                    🗑️ Remove Job
+                </button>
+                <small class="action-warning">⚠️ This will permanently delete the job and all applications</small>
+            </div>
         </div>
     `;
 }
@@ -573,6 +759,9 @@ function createApplicationCard(application) {
             </div>
             <div class="job-actions">
                 <button class="btn btn-info" onclick="showContactInfo('${job.id}')">Show Contact Info</button>
+                <button class="btn btn-danger" onclick="withdrawApplication('${application.id}', '${job.title}')">
+                    🚫 Withdraw Application
+                </button>
             </div>
         </div>
     `;
@@ -627,49 +816,6 @@ function hideContactInfo(jobId) {
     button.onclick = () => showContactInfo(jobId);
 }
 
-async function updateApplicationStatus(applicationId, status) {
-    try {
-        // Disable the buttons immediately to prevent double-clicking
-        const buttons = document.querySelectorAll(`button[onclick*="${applicationId}"]`);
-        buttons.forEach(btn => {
-            btn.disabled = true;
-            btn.textContent = status === 'accepted' ? 'Accepting...' : 'Rejecting...';
-        });
-
-        const response = await fetch(`/api/applications/${applicationId}/status`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${localStorage.getItem('token')}`
-            },
-            body: JSON.stringify({ status })
-        });
-        
-        const data = await response.json();
-        
-        if (response.ok) {
-            showNotification(`Application ${status} successfully!`, 'success');
-            // Reload department jobs to show updated status
-            await loadDepartmentJobs();
-        } else {
-            showNotification(data.error || `Failed to ${status} application`, 'error');
-            // Re-enable buttons if there was an error
-            buttons.forEach(btn => {
-                btn.disabled = false;
-                btn.textContent = status === 'accepted' ? 'Accept' : 'Reject';
-            });
-        }
-    } catch (error) {
-        showNotification('Network error. Please try again.', 'error');
-        // Re-enable buttons if there was an error
-        const buttons = document.querySelectorAll(`button[onclick*="${applicationId}"]`);
-        buttons.forEach(btn => {
-            btn.disabled = false;
-            btn.textContent = status === 'accepted' ? 'Accept' : 'Reject';
-        });
-    }
-}
-
 function showNotification(message, type = 'success') {
     const notification = document.createElement('div');
     notification.className = `notification ${type}`;
@@ -681,4 +827,435 @@ function showNotification(message, type = 'success') {
     setTimeout(() => {
         notification.remove();
     }, 4000);
+}
+
+function showSocketNotification(message) {
+    const notification = document.createElement('div');
+    notification.className = 'socket-notification';
+    notification.textContent = message;
+    
+    document.body.appendChild(notification);
+    
+    // Remove notification after 5 seconds
+    setTimeout(() => {
+        notification.remove();
+    }, 5000);
+}
+
+// Data Management Functions
+
+function showDataManagement() {
+    if (currentUser.role !== 'department') {
+        showNotification('Access denied', 'error');
+        return;
+    }
+    
+    const dataManagementHtml = `
+        <div class="data-management-section">
+            <h3>📊 System Management</h3>
+            
+            <div class="management-tabs">
+                <button onclick="showSystemStats()" class="tab-btn active">System Stats</button>
+                <button onclick="showDataBackup()" class="tab-btn">Data Backup</button>
+                <button onclick="showJobManagement()" class="tab-btn">Job Management</button>
+            </div>
+            
+            <div id="management-content">
+                <!-- Content will be loaded here -->
+            </div>
+            
+            <button onclick="hideDatatManagement()" class="btn btn-secondary">Back to Dashboard</button>
+        </div>
+    `;
+    
+    const dashboardContent = document.querySelector('#departmentDashboard .dashboard-content') || 
+                            document.getElementById('departmentDashboard');
+    dashboardContent.innerHTML = dataManagementHtml;
+    
+    // Load initial stats
+    showSystemStats();
+}
+
+function hideDatatManagement() {
+    loadDepartmentJobs(); // Return to normal dashboard
+}
+
+async function showSystemStats() {
+    try {
+        setActiveTab(0);
+        const response = await fetch('/api/admin/stats', {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+        
+        if (!response.ok) throw new Error('Failed to fetch stats');
+        
+        const stats = await response.json();
+        
+        const contentHtml = `
+            <div class="stats-container">
+                <h4>📈 Job Statistics</h4>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h5>Total Jobs</h5>
+                        <span class="stat-number">${stats.jobStats.total}</span>
+                    </div>
+                    <div class="stat-card">
+                        <h5>Active Jobs</h5>
+                        <span class="stat-number">${stats.jobStats.active}</span>
+                    </div>
+                    <div class="stat-card">
+                        <h5>Completed Jobs</h5>
+                        <span class="stat-number">${stats.jobStats.completed}</span>
+                    </div>
+                    <div class="stat-card">
+                        <h5>Expired Jobs</h5>
+                        <span class="stat-number">${stats.jobStats.expired}</span>
+                    </div>
+                    <div class="stat-card">
+                        <h5>Total Applications</h5>
+                        <span class="stat-number">${stats.jobStats.totalApplications}</span>
+                    </div>
+                    <div class="stat-card">
+                        <h5>Avg Applications/Job</h5>
+                        <span class="stat-number">${stats.jobStats.averageApplicationsPerJob}</span>
+                    </div>
+                </div>
+                
+                <h4>🔍 Data Integrity</h4>
+                <div class="integrity-status ${stats.dataIntegrity.isHealthy ? 'healthy' : 'unhealthy'}">
+                    <strong>Status: ${stats.dataIntegrity.isHealthy ? '✅ Healthy' : '❌ Issues Found'}</strong>
+                    ${!stats.dataIntegrity.isHealthy ? 
+                        `<ul>${stats.dataIntegrity.errors.map(error => `<li>${error}</li>`).join('')}</ul>` 
+                        : ''}
+                </div>
+                
+                <div class="admin-actions">
+                    <button onclick="updateJobStatuses()" class="btn btn-primary">🔄 Update Job Statuses</button>
+                    <button onclick="cleanupOrphanedRecords()" class="btn btn-secondary">🧹 Cleanup Orphaned Records</button>
+                </div>
+                <small>Last updated: ${new Date(stats.timestamp).toLocaleString()}</small>
+            </div>
+        `;
+        
+        document.getElementById('management-content').innerHTML = contentHtml;
+    } catch (error) {
+        showNotification('Failed to load system stats', 'error');
+    }
+}
+
+async function showDataBackup() {
+    try {
+        setActiveTab(1);
+        const contentHtml = `
+            <div class="backup-container">
+                <h4>💾 Data Backup & Archive</h4>
+                
+                <div class="backup-actions">
+                    <button onclick="createBackup()" class="btn btn-primary">Create Backup Now</button>
+                    <button onclick="archiveOldJobs()" class="btn btn-secondary">Archive Old Jobs</button>
+                </div>
+                
+                <div class="backup-info">
+                    <h5>Backup Information</h5>
+                    <p>• Backups are created automatically daily at 1:00 AM</p>
+                    <p>• Old backups (>30 days) are cleaned automatically</p>
+                    <p>• Manual backups can be created anytime</p>
+                    <p>• Archives contain jobs completed/expired >90 days ago</p>
+                </div>
+                
+                <div id="backup-results"></div>
+            </div>
+        `;
+        
+        document.getElementById('management-content').innerHTML = contentHtml;
+    } catch (error) {
+        showNotification('Failed to load backup section', 'error');
+    }
+}
+
+async function showJobManagement() {
+    try {
+        setActiveTab(2);
+        
+        // Get all jobs for management
+        const response = await fetch('/api/my-jobs', {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+        
+        if (!response.ok) throw new Error('Failed to fetch jobs');
+        
+        const jobs = await response.json();
+        
+        const contentHtml = `
+            <div class="job-management-container">
+                <h4>🎯 Job Lifecycle Management</h4>
+                
+                <div class="job-filters">
+                    <select onchange="filterJobsByStatus(this.value)" class="form-control">
+                        <option value="">All Jobs</option>
+                        <option value="active">Active</option>
+                        <option value="completed">Completed</option>
+                        <option value="expired">Expired</option>
+                        <option value="cancelled">Cancelled</option>
+                    </select>
+                </div>
+                
+                <div id="job-management-list">
+                    ${renderJobManagementList(jobs)}
+                </div>
+            </div>
+        `;
+        
+        document.getElementById('management-content').innerHTML = contentHtml;
+    } catch (error) {
+        showNotification('Failed to load job management', 'error');
+    }
+}
+
+function renderJobManagementList(jobs) {
+    if (!jobs || jobs.length === 0) {
+        return '<p>No jobs found.</p>';
+    }
+    
+    return jobs.map(job => `
+        <div class="job-management-item" data-status="${job.status}">
+            <div class="job-header">
+                <h5>${job.title}</h5>
+                <span class="job-status status-${job.status}">${job.status.toUpperCase()}</span>
+            </div>
+            <div class="job-details">
+                <p><strong>Location:</strong> ${job.location}</p>
+                <p><strong>Reporting Time:</strong> ${new Date(job.reportingTime).toLocaleString()}</p>
+                <p><strong>Applications:</strong> ${job.applications ? job.applications.length : 0}</p>
+                <p><strong>Created:</strong> ${new Date(job.createdAt).toLocaleDateString()}</p>
+            </div>
+            <div class="job-actions">
+                ${job.status === 'active' ? 
+                    `<button onclick="cancelJob('${job.id}')" class="btn btn-danger btn-sm">Cancel Job</button>` 
+                    : ''}
+                <button onclick="viewJobDetails('${job.id}')" class="btn btn-info btn-sm">View Details</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function filterJobsByStatus(status) {
+    const items = document.querySelectorAll('.job-management-item');
+    items.forEach(item => {
+        if (!status || item.dataset.status === status) {
+            item.style.display = 'block';
+        } else {
+            item.style.display = 'none';
+        }
+    });
+}
+
+function setActiveTab(index) {
+    const tabs = document.querySelectorAll('.tab-btn');
+    tabs.forEach((tab, i) => {
+        tab.classList.toggle('active', i === index);
+    });
+}
+
+async function createBackup() {
+    try {
+        const response = await fetch('/api/admin/backup', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+        
+        if (!response.ok) throw new Error('Backup failed');
+        
+        const result = await response.json();
+        
+        document.getElementById('backup-results').innerHTML = `
+            <div class="success-message">
+                ✅ Backup created successfully!<br>
+                <small>File: ${result.backupPath} at ${new Date(result.timestamp).toLocaleString()}</small>
+            </div>
+        `;
+        
+        showNotification('Backup created successfully', 'success');
+    } catch (error) {
+        showNotification('Backup failed', 'error');
+    }
+}
+
+async function updateJobStatuses() {
+    try {
+        const response = await fetch('/api/admin/update-job-statuses', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+        
+        if (!response.ok) throw new Error('Update failed');
+        
+        const result = await response.json();
+        showNotification(`Updated ${result.updatedCount} job statuses`, 'success');
+        
+        // Refresh stats
+        showSystemStats();
+    } catch (error) {
+        showNotification('Failed to update job statuses', 'error');
+    }
+}
+
+async function archiveOldJobs() {
+    if (!confirm('Archive jobs completed/expired more than 90 days ago?')) return;
+    
+    try {
+        const response = await fetch('/api/admin/archive-jobs', {
+            method: 'POST',
+            headers: { 
+                'Authorization': `Bearer ${localStorage.getItem('token')}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ daysOld: 90 })
+        });
+        
+        if (!response.ok) throw new Error('Archive failed');
+        
+        const result = await response.json();
+        
+        document.getElementById('backup-results').innerHTML = `
+            <div class="success-message">
+                📦 Archived ${result.archivedCount} old jobs successfully!<br>
+                <small>Jobs older than ${result.daysOld} days at ${new Date(result.timestamp).toLocaleString()}</small>
+            </div>
+        `;
+        
+        showNotification(`Archived ${result.archivedCount} old jobs`, 'success');
+    } catch (error) {
+        showNotification('Archive failed', 'error');
+    }
+}
+
+async function cancelJob(jobId) {
+    const reason = prompt('Please provide a reason for cancellation:');
+    if (!reason) return;
+    
+    try {
+        const response = await fetch(`/api/jobs/${jobId}/cancel`, {
+            method: 'POST',
+            headers: { 
+                'Authorization': `Bearer ${localStorage.getItem('token')}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ reason })
+        });
+        
+        if (!response.ok) throw new Error('Cancellation failed');
+        
+        showNotification('Job cancelled successfully', 'success');
+        showJobManagement(); // Refresh the job list
+    } catch (error) {
+        showNotification('Failed to cancel job', 'error');
+    }
+}
+
+// Withdraw application function
+async function withdrawApplication(applicationId, jobTitle) {
+    if (!confirm(`Are you sure you want to withdraw your application for "${jobTitle}"?\n\nThis action cannot be undone.`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/applications/${applicationId}`, {
+            method: 'DELETE',
+            headers: { 
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to withdraw application');
+        }
+        
+        const result = await response.json();
+        showNotification(`Application for "${jobTitle}" withdrawn successfully`, 'success');
+        
+        // Remove the application card from the UI immediately
+        const applicationCard = document.getElementById(`application-${applicationId}`);
+        if (applicationCard) {
+            applicationCard.style.opacity = '0.5';
+            applicationCard.style.transform = 'scale(0.95)';
+            setTimeout(() => {
+                applicationCard.remove();
+                // Check if there are any applications left
+                const applicationsList = document.getElementById('applicationsList');
+                if (applicationsList.children.length === 0) {
+                    applicationsList.innerHTML = '<div class="empty-state"><h3>No applications yet</h3><p>Apply for some volunteer opportunities!</p></div>';
+                }
+            }, 300);
+        }
+        
+        // Refresh the available jobs list in case this job now has spots
+        if (currentUser.role === 'volunteer') {
+            loadAvailableJobs();
+        }
+        
+    } catch (error) {
+        showNotification(error.message, 'error');
+    }
+}
+
+// Remove job function
+async function removeJob(jobId, jobTitle) {
+    if (!confirm(`Are you sure you want to remove the job "${jobTitle}"?\n\nThis will:\n• Delete the job permanently\n• Remove all volunteer applications\n• Notify all applicants\n\nThis action cannot be undone.`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/jobs/${jobId}`, {
+            method: 'DELETE',
+            headers: { 
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to remove job');
+        }
+        
+        const result = await response.json();
+        showNotification(`Job "${jobTitle}" and ${result.affectedApplications} applications removed successfully`, 'success');
+        
+        // Refresh the department jobs list
+        loadDepartmentJobs();
+        
+    } catch (error) {
+        showNotification(error.message, 'error');
+    }
+}
+
+// Cleanup orphaned records function
+async function cleanupOrphanedRecords() {
+    if (!confirm('Clean up orphaned records?\n\nThis will remove:\n• Applications for deleted jobs\n• Applications from deleted users\n• Jobs from deleted departments\n\nThis action is safe and recommended for data integrity.')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/admin/cleanup-orphans', {
+            method: 'POST',
+            headers: { 
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to cleanup orphaned records');
+        }
+        
+        const result = await response.json();
+        showNotification(`Cleaned up ${result.cleanupCount} orphaned records`, 'success');
+        
+        // Refresh stats to show updated integrity status
+        showSystemStats();
+        
+    } catch (error) {
+        showNotification(error.message, 'error');
+    }
 }

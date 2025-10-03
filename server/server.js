@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const http = require('http');
 const socketIo = require('socket.io');
+const { DataManager, JobLifecycleManager } = require('./dataManager');
 
 const app = express();
 const server = http.createServer(app);
@@ -29,6 +30,10 @@ const dataDir = path.join(__dirname, '../data');
 const usersFile = path.join(dataDir, 'users.json');
 const jobsFile = path.join(dataDir, 'jobs.json');
 const applicationsFile = path.join(dataDir, 'applications.json');
+
+// Initialize data managers
+const dataManager = new DataManager(dataDir);
+const jobLifecycleManager = new JobLifecycleManager(dataManager);
 
 // Initialize data files if they don't exist
 const initializeDataFiles = () => {
@@ -77,36 +82,196 @@ const authenticateToken = (req, res, next) => {
 
 // Routes
 
+// Data Management Endpoints
+
+// Get system statistics and health
+app.get('/api/admin/stats', authenticateToken, (req, res) => {
+  try {
+    // Only departments can access admin stats
+    if (req.user.role !== 'department') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const stats = jobLifecycleManager.getJobStatistics();
+    const dataErrors = dataManager.validateData();
+    
+    res.json({
+      jobStats: stats,
+      dataIntegrity: {
+        errors: dataErrors,
+        isHealthy: dataErrors.length === 0
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get system stats' });
+  }
+});
+
+// Create data backup
+app.post('/api/admin/backup', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'department') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const backupPath = await dataManager.createBackup();
+    res.json({ 
+      message: 'Backup created successfully',
+      backupPath: path.basename(backupPath),
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Backup failed' });
+  }
+});
+
+// Update job statuses (lifecycle management)
+app.post('/api/admin/update-job-statuses', authenticateToken, (req, res) => {
+  try {
+    if (req.user.role !== 'department') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const updatedCount = jobLifecycleManager.updateJobStatuses();
+    res.json({ 
+      message: `Updated ${updatedCount} job statuses`,
+      updatedCount,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update job statuses' });
+  }
+});
+
+// Cancel a job
+app.post('/api/jobs/:jobId/cancel', authenticateToken, (req, res) => {
+  try {
+    if (req.user.role !== 'department') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const { jobId } = req.params;
+    const { reason } = req.body;
+    
+    const cancelledJob = jobLifecycleManager.cancelJob(jobId, reason);
+    
+    // Notify via socket
+    io.emit('jobCancelled', { jobId, reason });
+    
+    res.json({ 
+      message: 'Job cancelled successfully',
+      job: cancelledJob
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Archive old jobs
+app.post('/api/admin/archive-jobs', authenticateToken, (req, res) => {
+  try {
+    if (req.user.role !== 'department') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const { daysOld = 90 } = req.body;
+    const archivedCount = jobLifecycleManager.archiveOldJobs(daysOld);
+    
+    res.json({ 
+      message: `Archived ${archivedCount} old jobs`,
+      archivedCount,
+      daysOld,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to archive jobs' });
+  }
+});
+
+// Cleanup orphaned records
+app.post('/api/admin/cleanup-orphans', authenticateToken, (req, res) => {
+  try {
+    if (req.user.role !== 'department') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const cleanupCount = dataManager.cleanupOrphanedRecords();
+    
+    res.json({ 
+      message: `Cleaned up ${cleanupCount} orphaned records`,
+      cleanupCount,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to cleanup orphaned records' });
+  }
+});
+
 // User Registration
 app.post('/api/register', async (req, res) => {
   try {
-    const { email, password, firstName, lastName, phone, role } = req.body;
+    const { email, password, firstName, lastName, phone, role, hfnId } = req.body;
     
-    if (!email || !password || !firstName || !lastName || !phone || !role) {
-      return res.status(400).json({ error: 'All fields including phone number are required' });
+    // Basic validation
+    if (!firstName || !lastName || !role) {
+      return res.status(400).json({ error: 'First name, last name, and role are required' });
+    }
+
+    // Role-specific validation
+    if (role === 'volunteer') {
+      // Volunteers must provide at least email OR phone (no password required)
+      if (!email && !phone) {
+        return res.status(400).json({ error: 'Volunteers must provide either email or phone number' });
+      }
+    } else if (role === 'department') {
+      // Departments must provide all fields including HFN ID and password
+      if (!email || !phone || !hfnId || !password) {
+        return res.status(400).json({ error: 'Departments must provide email, phone, HFN ID, and password' });
+      }
+      
+      // Validate HFN ID format (6 letters + 3 numbers)
+      const hfnPattern = /^[A-Za-z]{6}[0-9]{3}$/;
+      if (!hfnPattern.test(hfnId)) {
+        return res.status(400).json({ error: 'Invalid HFN ID format. Must be 6 letters followed by 3 numbers (e.g., HJABCD123)' });
+      }
+    } else {
+      return res.status(400).json({ error: 'Invalid role. Must be volunteer or department' });
     }
 
     const users = readJsonFile(usersFile);
     
-    // Check if user already exists
-    if (users.find(user => user.email === email)) {
-      return res.status(400).json({ error: 'User already exists' });
+    // Check for existing users based on provided identifiers
+    const existingUser = users.find(user => {
+      if (email && user.email === email) return true;
+      if (phone && user.phone === phone) return true;
+      if (hfnId && user.hfnId === hfnId.toUpperCase()) return true;
+      return false;
+    });
+    
+    if (existingUser) {
+      return res.status(400).json({ error: 'User with this email, phone, or HFN ID already exists' });
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-    
     // Create new user
     const newUser = {
       id: Date.now().toString(),
-      email,
-      password: hashedPassword,
       firstName,
       lastName,
-      phone,
-      role, // 'volunteer' or 'department'
+      role,
       createdAt: new Date().toISOString()
     };
+    
+    // Add optional fields if provided
+    if (email) newUser.email = email;
+    if (phone) newUser.phone = phone;
+    if (hfnId) newUser.hfnId = hfnId.toUpperCase();
+    
+    // Hash password only for departments (volunteers don't have passwords)
+    if (role === 'department' && password) {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      newUser.password = hashedPassword;
+    }
 
     users.push(newUser);
     writeJsonFile(usersFile, users);
@@ -120,22 +285,44 @@ app.post('/api/register', async (req, res) => {
 // User Login
 app.post('/api/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { identifier, password } = req.body;
     
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
+    if (!identifier) {
+      return res.status(400).json({ error: 'Login identifier is required' });
     }
 
     const users = readJsonFile(usersFile);
-    const user = users.find(u => u.email === email);
+    
+    // Find user by email, phone, or HFN ID
+    const user = users.find(u => 
+      u.email === identifier || 
+      u.phone === identifier || 
+      u.hfnId === identifier.toUpperCase()
+    );
 
     if (!user) {
-      return res.status(400).json({ error: 'Invalid credentials' });
+      return res.status(400).json({ error: 'User not found' });
     }
 
-    const isValidPassword = await bcrypt.compare(password, user.password);
-    if (!isValidPassword) {
-      return res.status(400).json({ error: 'Invalid credentials' });
+    // Check password requirements based on role
+    if (user.role === 'department') {
+      // Departments must provide password
+      if (!password) {
+        return res.status(400).json({ error: 'Password is required for department login' });
+      }
+      
+      // Verify password for departments
+      if (!user.password) {
+        return res.status(400).json({ error: 'Department account missing password. Please contact administrator.' });
+      }
+      
+      const isValidPassword = await bcrypt.compare(password, user.password);
+      if (!isValidPassword) {
+        return res.status(400).json({ error: 'Invalid password' });
+      }
+    } else if (user.role === 'volunteer') {
+      // Volunteers don't need password - just identifier verification
+      // If password is provided by volunteer (shouldn't happen), ignore it
     }
 
     // Create JWT token
@@ -166,25 +353,19 @@ app.get('/api/jobs', (req, res) => {
     const jobs = readJsonFile(jobsFile);
     const applications = readJsonFile(applicationsFile);
     
-    // Add application count to each job (only count pending and accepted applications)
+    // Add application count to each job (only count accepted applications)
     const jobsWithCounts = jobs.map(job => {
-      const activeApplications = applications.filter(app => 
-        app.jobId === job.id && (app.status === 'pending' || app.status === 'accepted')
-      );
-      const applicationCount = activeApplications.length;
-      const acceptedCount = applications.filter(app => 
+      const acceptedApplications = applications.filter(app => 
         app.jobId === job.id && app.status === 'accepted'
-      ).length;
-      const pendingCount = applications.filter(app => 
-        app.jobId === job.id && app.status === 'pending'
-      ).length;
+      );
+      const acceptedCount = acceptedApplications.length;
       
       return { 
         ...job, 
-        applicationCount, 
+        applicationCount: acceptedCount,
         acceptedCount,
-        pendingCount,
-        availableSpots: job.maxVolunteers - applicationCount
+        pendingCount: 0, // No pending applications anymore
+        availableSpots: job.maxVolunteers - acceptedCount
       };
     });
     
@@ -254,33 +435,32 @@ app.post('/api/jobs/:jobId/apply', authenticateToken, (req, res) => {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    // Check if already applied (including rejected applications)
+    // Check if already applied
     const existingApplication = applications.find(
       app => app.jobId === jobId && app.volunteerId === req.user.id
     );
 
     if (existingApplication) {
-      if (existingApplication.status === 'rejected') {
-        return res.status(400).json({ error: 'Your previous application was rejected. You cannot reapply for this job.' });
-      }
       return res.status(400).json({ error: 'Already applied for this job' });
     }
 
-    // Check if job is full (only count pending and accepted applications)
-    const activeApplications = applications.filter(app => 
-      app.jobId === jobId && (app.status === 'pending' || app.status === 'accepted')
+    // Check if job is full (only count accepted applications)
+    const acceptedApplications = applications.filter(app => 
+      app.jobId === jobId && app.status === 'accepted'
     );
     
-    if (activeApplications.length >= job.maxVolunteers) {
+    if (acceptedApplications.length >= job.maxVolunteers) {
       return res.status(400).json({ error: 'This job is full. No more applications accepted.' });
     }
 
+    // Automatically accept the application
     const newApplication = {
       id: Date.now().toString(),
       jobId,
       volunteerId: req.user.id,
-      status: 'pending',
-      appliedAt: new Date().toISOString()
+      status: 'accepted', // Automatically accepted
+      appliedAt: new Date().toISOString(),
+      acceptedAt: new Date().toISOString()
     };
 
     applications.push(newApplication);
@@ -307,6 +487,106 @@ app.get('/api/my-applications', authenticateToken, (req, res) => {
       });
 
     res.json(userApplications);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Withdraw application
+app.delete('/api/applications/:applicationId', authenticateToken, (req, res) => {
+  try {
+    if (req.user.role !== 'volunteer') {
+      return res.status(403).json({ error: 'Only volunteers can withdraw applications' });
+    }
+
+    const { applicationId } = req.params;
+    const applications = readJsonFile(applicationsFile);
+    const jobs = readJsonFile(jobsFile);
+    
+    // Find the application
+    const applicationIndex = applications.findIndex(app => 
+      app.id === applicationId && app.volunteerId === req.user.id
+    );
+    
+    if (applicationIndex === -1) {
+      return res.status(404).json({ error: 'Application not found or you are not authorized to withdraw it' });
+    }
+    
+    const application = applications[applicationIndex];
+    const job = jobs.find(j => j.id === application.jobId);
+    
+    if (!job) {
+      return res.status(404).json({ error: 'Associated job not found' });
+    }
+    
+    // Remove the application
+    applications.splice(applicationIndex, 1);
+    writeJsonFile(applicationsFile, applications);
+    
+    // Notify via socket
+    io.emit('applicationWithdrawn', {
+      applicationId,
+      jobId: application.jobId,
+      jobTitle: job.title,
+      volunteerName: `${req.user.firstName} ${req.user.lastName}`
+    });
+    
+    res.json({ 
+      message: 'Application withdrawn successfully',
+      withdrawnApplication: application,
+      job: { id: job.id, title: job.title }
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Remove job (Department only)
+app.delete('/api/jobs/:jobId', authenticateToken, (req, res) => {
+  try {
+    if (req.user.role !== 'department') {
+      return res.status(403).json({ error: 'Only departments can remove jobs' });
+    }
+
+    const { jobId } = req.params;
+    const jobs = readJsonFile(jobsFile);
+    const applications = readJsonFile(applicationsFile);
+    
+    // Find the job
+    const jobIndex = jobs.findIndex(job => 
+      job.id === jobId && job.departmentId === req.user.id
+    );
+    
+    if (jobIndex === -1) {
+      return res.status(404).json({ error: 'Job not found or you are not authorized to remove it' });
+    }
+    
+    const job = jobs[jobIndex];
+    
+    // Find applications for this job
+    const jobApplications = applications.filter(app => app.jobId === jobId);
+    
+    // Remove the job
+    jobs.splice(jobIndex, 1);
+    writeJsonFile(jobsFile, jobs);
+    
+    // Remove all applications for this job
+    const remainingApplications = applications.filter(app => app.jobId !== jobId);
+    writeJsonFile(applicationsFile, remainingApplications);
+    
+    // Notify via socket
+    io.emit('jobRemoved', {
+      jobId,
+      jobTitle: job.title,
+      affectedVolunteers: jobApplications.length,
+      removedBy: `${req.user.firstName} ${req.user.lastName}`
+    });
+    
+    res.json({ 
+      message: 'Job and all associated applications removed successfully',
+      removedJob: job,
+      affectedApplications: jobApplications.length
+    });
   } catch (error) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -382,48 +662,6 @@ app.get('/api/my-jobs', authenticateToken, (req, res) => {
   }
 });
 
-// Update application status (Department only)
-app.put('/api/applications/:applicationId/status', authenticateToken, (req, res) => {
-  try {
-    if (req.user.role !== 'department') {
-      return res.status(403).json({ error: 'Only departments can update application status' });
-    }
-
-    const { applicationId } = req.params;
-    const { status } = req.body;
-
-    if (!['accepted', 'rejected'].includes(status)) {
-      return res.status(400).json({ error: 'Invalid status. Must be "accepted" or "rejected"' });
-    }
-
-    const applications = readJsonFile(applicationsFile);
-    const jobs = readJsonFile(jobsFile);
-    
-    const applicationIndex = applications.findIndex(app => app.id === applicationId);
-    if (applicationIndex === -1) {
-      return res.status(404).json({ error: 'Application not found' });
-    }
-
-    const application = applications[applicationIndex];
-    
-    // Verify the job belongs to this department
-    const job = jobs.find(j => j.id === application.jobId && j.departmentId === req.user.id);
-    if (!job) {
-      return res.status(403).json({ error: 'You can only update applications for your own jobs' });
-    }
-
-    // Update application status
-    applications[applicationIndex].status = status;
-    applications[applicationIndex].updatedAt = new Date().toISOString();
-
-    writeJsonFile(applicationsFile, applications);
-
-    res.json({ message: 'Application status updated successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
 // Socket.io connection
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
@@ -441,7 +679,71 @@ app.get('/', (req, res) => {
 // Initialize data files and start server
 initializeDataFiles();
 
+// Automatic maintenance routines
+const startMaintenanceRoutines = () => {
+  // Update job statuses every hour
+  setInterval(() => {
+    try {
+      const updatedCount = jobLifecycleManager.updateJobStatuses();
+      if (updatedCount > 0) {
+        console.log(`🔄 Auto-updated ${updatedCount} job statuses`);
+        io.emit('jobStatusesUpdated', { count: updatedCount });
+      }
+    } catch (error) {
+      console.error('❌ Auto job status update failed:', error);
+    }
+  }, 60 * 60 * 1000); // 1 hour
+
+  // Clean old backups every day at 2 AM
+  const cleanupBackups = () => {
+    const now = new Date();
+    if (now.getHours() === 2 && now.getMinutes() === 0) {
+      try {
+        dataManager.cleanOldBackups();
+      } catch (error) {
+        console.error('❌ Backup cleanup failed:', error);
+      }
+    }
+  };
+  
+  setInterval(cleanupBackups, 60 * 1000); // Check every minute
+
+  // Create daily backup at 1 AM
+  const createDailyBackup = () => {
+    const now = new Date();
+    if (now.getHours() === 1 && now.getMinutes() === 0) {
+      dataManager.createBackup()
+        .then(() => console.log('✅ Daily backup completed'))
+        .catch(error => console.error('❌ Daily backup failed:', error));
+    }
+  };
+
+  setInterval(createDailyBackup, 60 * 1000); // Check every minute
+
+  // Cleanup orphaned records at 3 AM daily
+  const cleanupOrphans = () => {
+    const now = new Date();
+    if (now.getHours() === 3 && now.getMinutes() === 0) {
+      try {
+        const cleanupCount = dataManager.cleanupOrphanedRecords();
+        if (cleanupCount > 0) {
+          console.log(`🧹 Daily cleanup: removed ${cleanupCount} orphaned records`);
+        }
+      } catch (error) {
+        console.error('❌ Orphaned record cleanup failed:', error);
+      }
+    }
+  };
+
+  setInterval(cleanupOrphans, 60 * 1000); // Check every minute
+
+  console.log('🤖 Maintenance routines started');
+};
+
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log('Volunteer Job Application is ready!');
+  
+  // Start maintenance routines after server is running
+  startMaintenanceRoutines();
 });

@@ -31,9 +31,17 @@
                 <!-- Login Form -->
                 <div id="loginForm" class="form-container" style="display: none;">
                     <h2>Login</h2>
+                    <div class="login-instructions">
+                        <div class="instruction-item volunteer">
+                            <strong>👥 Volunteers:</strong> Enter your email or mobile number only
+                        </div>
+                        <div class="instruction-item department">
+                            <strong>🏢 Departments:</strong> Enter your email/mobile/HFN ID + password
+                        </div>
+                    </div>
                     <form id="loginFormElement">
-                        <input type="email" id="loginEmail" placeholder="Email" required>
-                        <input type="password" id="loginPassword" placeholder="Password" required>
+                        <input type="text" id="loginIdentifier" placeholder="Email, Mobile, or HFN ID" required>
+                        <input type="password" id="loginPassword" placeholder="Password (Required for Departments only)">
                         <button type="submit" class="btn btn-primary">Login</button>
                     </form>
                     <p>Don't have an account? <a href="#" id="showRegister">Register here</a></p>
@@ -45,14 +53,33 @@
                     <form id="registerFormElement">
                         <input type="text" id="registerFirstName" placeholder="First Name" required>
                         <input type="text" id="registerLastName" placeholder="Last Name" required>
-                        <input type="email" id="registerEmail" placeholder="Email" required>
-                        <input type="tel" id="registerPhone" placeholder="Phone Number" required>
-                        <input type="password" id="registerPassword" placeholder="Password" required>
-                        <select id="registerRole" required>
+                        
+                        <select id="registerRole" required onchange="toggleRegistrationFields()">
                             <option value="">Select Role</option>
                             <option value="volunteer">Volunteer</option>
                             <option value="department">Department</option>
                         </select>
+                        
+                        <!-- Volunteer Fields -->
+                        <div id="volunteerFields" style="display: none;">
+                            <div class="form-note">For volunteers: Provide either email OR mobile number (No password required)</div>
+                            <input type="email" id="registerVolunteerEmail" placeholder="Email (Optional)">
+                            <input type="tel" id="registerVolunteerPhone" placeholder="Mobile Number (Optional)">
+                        </div>
+                        
+                        <!-- Department Fields -->
+                        <div id="departmentFields" style="display: none;">
+                            <div class="form-note">For departments: All fields are required including HFN ID and password</div>
+                            <input type="email" id="registerDepartmentEmail" placeholder="Official Email" required>
+                            <input type="tel" id="registerDepartmentPhone" placeholder="Contact Number" required>
+                            <input type="text" id="registerHfnId" placeholder="HFN ID (Format: AAAAAA111)" pattern="[A-Za-z]{6}[0-9]{3}" title="HFN ID must be 6 letters followed by 3 numbers" required>
+                            <div class="hfn-info">
+                                <small>� HFN ID Format: 6 letters + 3 numbers (e.g., HJABCD123)</small>
+                            </div>
+                            <input type="password" id="registerDepartmentPassword" placeholder="Password" required>
+                        </div>
+                        
+                        <input type="password" id="registerPassword" placeholder="Password" style="display: none;">
                         <button type="submit" class="btn btn-primary">Register</button>
                     </form>
                     <p>Already have an account? <a href="#" id="showLogin">Login here</a></p>
@@ -66,7 +93,10 @@
                 <div id="departmentDashboard" style="display: none;">
                     <div class="dashboard-header">
                         <h2>Department Dashboard</h2>
-                        <button id="showJobForm" class="btn btn-success">Post New Job</button>
+                        <div class="dashboard-actions">
+                            <button id="showJobForm" class="btn btn-success">Post New Job</button>
+                            <button onclick="showDataManagement()" class="btn btn-info">📊 System Management</button>
+                        </div>
                     </div>
 
                     <!-- Job Posting Form -->
