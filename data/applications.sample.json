@@ -1,0 +1,9 @@
+[
+  {
+    "id": "example_application_1",
+    "jobId": "example_job_1",
+    "volunteerId": "example_volunteer_1",
+    "status": "accepted",
+    "appliedAt": "2025-01-01T00:00:00.000Z"
+  }
+]

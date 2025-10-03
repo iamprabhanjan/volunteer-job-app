@@ -1,0 +1,17 @@
+[
+  {
+    "id": "example_job_1",
+    "title": "Community Garden Maintenance",
+    "description": "Help maintain the community garden by weeding, watering, and planting new vegetables.",
+    "ageGroup": "16+",
+    "location": "Community Center Garden",
+    "reportingTime": "2025-12-01T09:00",
+    "maxVolunteers": "5",
+    "contactName": "Garden Coordinator",
+    "contactPhone": "555-0123",
+    "contactEmail": "garden@example.org",
+    "departmentId": "example_department_1",
+    "status": "active",
+    "createdAt": "2025-01-01T00:00:00.000Z"
+  }
+]

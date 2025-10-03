@@ -1,0 +1,21 @@
+[
+  {
+    "id": "example_volunteer_1",
+    "firstName": "John",
+    "lastName": "Volunteer",
+    "role": "volunteer",
+    "createdAt": "2025-01-01T00:00:00.000Z",
+    "phone": "1234567890"
+  },
+  {
+    "id": "example_department_1",
+    "firstName": "Jane",
+    "lastName": "Department",
+    "role": "department",
+    "createdAt": "2025-01-01T00:00:00.000Z",
+    "email": "department@example.com",
+    "phone": "1234567891",
+    "hfnId": "DEPT001",
+    "password": "$2a$10$example.hash.for.demo.purposes.only"
+  }
+]

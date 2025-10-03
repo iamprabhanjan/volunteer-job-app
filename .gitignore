@@ -51,9 +51,12 @@ pids
 *.swo
 
 # Data files (contains sensitive user information)
-data/
-data/*
+# Exclude actual data files but allow sample files and documentation
 data/*.json
+data/backups/
+data/archives/
+!data/*.sample.json
+!data/README.md
 
 # OS generated files
 Thumbs.db
