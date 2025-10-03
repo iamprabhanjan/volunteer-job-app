@@ -40,8 +40,8 @@ if %errorlevel% neq 0 (
     echo.
     set /p repo_url="Enter your GitHub repository URL (e.g., https://github.com/username/volunteer-job-app.git): "
     
-    if not "%repo_url%"=="" (
-        git remote add origin "%repo_url%"
+    if not "!repo_url!"=="" (
+        git remote add origin "!repo_url!"
         echo ✅ Remote repository added
     ) else (
         echo ❌ No repository URL provided. You'll need to add it manually later.
