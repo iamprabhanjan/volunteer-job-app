@@ -50,6 +50,11 @@ pids
 *.swp
 *.swo
 
+# Data files (contains sensitive user information)
+data/
+data/*
+data/*.json
+
 # OS generated files
 Thumbs.db
 .DS_Store
